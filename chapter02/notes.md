@@ -290,6 +290,16 @@ void CountDownLatch::countDown()
 
 对于读写锁，chenshuo给出的结论我没有实际体会，但是从工作的实践来看，一般都会用double-buffer.
 
+### Singleton
+
+### Sleep
+
+生产代码中线程的等待可分为两种：
+- 一种是等待资源可用（要么等在select/poll/epoll_wait 上，要么等在条件变量上43
+- 一种是等着进入临界区（等在mutex上）以便读写共享数据。后一种等待通常极短，否则程序性能和伸缩性就会有问题。
+
+如果多线程的安全性和效率要靠代码主动调用sleep 来保证，这显然是设计出了问题。
+
 ### References
 
 [calling-pthread-cond-signal-without-locking-mutex](https://stackoverflow.com/questions/4544234/calling-pthread-cond-signal-without-locking-mutex )<br>
