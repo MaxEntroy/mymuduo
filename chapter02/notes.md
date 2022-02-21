@@ -304,6 +304,12 @@ meyes's singleton(local static var)解决了线程安全的问题, 但是eager c
 
 如果多线程的安全性和效率要靠代码主动调用sleep 来保证，这显然是设计出了问题。
 
+### Summary
+
+- 线程同步的四项原则，尽量用高层同步设施（线程池、队列、倒计时）；
+- 使用普通互斥器和条件变量完成剩余的同步任务，采用RAII 惯用手法（idiom）
+和Scoped Locking。
+
 ### References
 
 [calling-pthread-cond-signal-without-locking-mutex](https://stackoverflow.com/questions/4544234/calling-pthread-cond-signal-without-locking-mutex )<br>
