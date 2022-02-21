@@ -292,6 +292,10 @@ void CountDownLatch::countDown()
 
 ### Singleton
 
+meyes's singleton(local static var)解决了线程安全的问题, 但是eager class static var同样可接解决线程安全问题，为什么还建议这么做?
+- cpp只能保证同一个文件中，声明的static变量的初始化顺序与其变量声明的顺序一致,不同文件则无法保证
+- 不同的单例之间可能有依赖，如果采用eager class static var可能导致依赖单例未初始化
+
 ### Sleep
 
 生产代码中线程的等待可分为两种：
