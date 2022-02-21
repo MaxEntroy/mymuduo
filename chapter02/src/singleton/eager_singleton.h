@@ -9,7 +9,7 @@ namespace mymuduo {
 
 class Singleton {
  public:
-  Singleton& GetInstance() {
+  static Singleton& GetInstance() {
     return *value_;
   }
 

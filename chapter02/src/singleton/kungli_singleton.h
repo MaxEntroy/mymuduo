@@ -10,12 +10,12 @@ namespace mymuduo {
 
 class Singleton {
  public:
-  Singleton& GetInstance() {
+  static Singleton& GetInstance() {
     pthread_once(&init_once_, &Singleton::Init);
     return *value_;
   }
 
-  void DestroyInstance() {
+  static void DestroyInstance() {
     pthread_once(&init_once_, &Singleton::Destroy);
     value_ = nullptr;
   }

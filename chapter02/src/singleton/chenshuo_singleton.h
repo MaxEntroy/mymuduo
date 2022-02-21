@@ -10,7 +10,7 @@ namespace mymuduo {
 
 class Singleton {
  public:
-  Singleton& GetInstance() {
+  static Singleton& GetInstance() {
     pthread_once(&init_once_, &Singleton::Init);
     return *value_;
   }
