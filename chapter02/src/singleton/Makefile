@@ -22,4 +22,4 @@ clean:
 
 .PHONY: clean o t
 
-main.o: main.cc meyers_singleton.h chenshuo_singleton.h kungli_singleton.h
+main.o: main.cc meyers_singleton.h chenshuo_singleton.h kungli_singleton.h eager_singleton.h
