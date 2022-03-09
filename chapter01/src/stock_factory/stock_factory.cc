@@ -103,19 +103,16 @@ StockFactory::StockPtr StockFactory::GetStock(const std::string& key) {
 
 void StockFactory::StockDeleter(const std::weak_ptr<StockFactory>& wptr, Stock* stock) {
   auto sptr = wptr.lock();
-  if (!sptr) {
-    return;
+  if (sptr) {
+    sptr->RemoveStock(stock);
   }
-  sptr->RemoveStock(stock);
+  delete stock;
 }
 
 void StockFactory::RemoveStock(Stock* stock) {
   if (stock) {
-    {
-      MutexLockGuard mtx_guard(mtx_);
-      stock_factory_.erase(stock->GetKey());
-    }
-    delete stock;
+    MutexLockGuard mtx_guard(mtx_);
+    stock_factory_.erase(stock->GetKey());
   }
 }
 

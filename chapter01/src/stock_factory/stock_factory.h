@@ -19,6 +19,7 @@ class Stock {
 
 namespace version1 {
 
+// shared_ptr
 class StockFactory {
  public:
   using StockPtr = std::shared_ptr<Stock>;
@@ -39,6 +40,7 @@ class StockFactory {
 
 namespace version2 {
 
+// weak_ptr
 class StockFactory {
  public:
   using StockPtr = std::weak_ptr<Stock>;
@@ -59,6 +61,7 @@ class StockFactory {
 
 namespace version3 {
 
+// weak_ptr with this
 class StockFactory {
  public:
   using StockPtr = std::weak_ptr<Stock>;
@@ -82,6 +85,7 @@ class StockFactory {
 
 namespace version4 {
 
+// weak_ptr with shared_from_this
 class StockFactory : public std::enable_shared_from_this<StockFactory> {
  public:
   using StockPtr = std::weak_ptr<Stock>;
@@ -105,6 +109,7 @@ class StockFactory : public std::enable_shared_from_this<StockFactory> {
 
 namespace version5 {
 
+// weak_ptr with weak_from_this
 class StockFactory : public std::enable_shared_from_this<StockFactory> {
  public:
   using StockPtr = std::weak_ptr<Stock>;
