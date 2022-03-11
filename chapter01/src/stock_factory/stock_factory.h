@@ -81,7 +81,7 @@ class StockFactory {
   std::unordered_map<std::string, StockPtr> stock_factory_;
 };
 
-}  // namespace version4
+}  // namespace version3
 
 namespace version4 {
 

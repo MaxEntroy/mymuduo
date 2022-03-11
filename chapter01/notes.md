@@ -197,7 +197,7 @@ void Write() {
 }
 ```
 
-上面代码使用了local copy的方式，缩短了临界区。
+上面代码使用了local copy的方式，缩短了临界区，对local_ptr的读写本身不需要加锁。
 
 ### shared_ptr技术与陷阱
 
@@ -257,3 +257,370 @@ void onMessage(const string& msg)
 
 - unique_ptr/shared_ptr 是管理资源的利器
 - 需要注意避免循环引用，通常的做法是owner 持有指向child 的shared_ptr，child 持有指向owner 的weak_ptr。
+
+### 对象池
+
+这一小节是一个实验章节，会将前面讲到的知识点应用到一个具体案例中，通过case by case的形式，让大家真正的融会贯通，可谓是本章的精华。
+在此，我先开宗明义的给出本小节的核心知识点(其实是换一个角度理解smart pointer，别开生面解惑也)
+
+- SmartPointer固然有RAII的作用，但是它还有另外一个核心作用：即避免raw pointer无法判断一个块内存是否有效的缺点，在多线程编程时尤为重要。
+- std::weak_ptr固然可以避免形成cylic reference，但是它还有另外一个核心作用：即避免std::shared_ptr意外延长对象生命周期的缺点，在多线程编程时尤为重要。
+
+我在串到一起说一下，当我们进行多线程编程时，
+1. 如果使用raw pointer，我们面临最大的问题就是，无法知道这个指针所指向的内存是否还有效，指针非空的断言肯定不行，因为这块地址可能已经重新分配了，
+如果此时接着使用，会导致undefined behavior。
+2. 故，我们引入shared_ptr，来保证这块地址在访问的时候，肯定是有效的，因为shared_ptr是强引用。这样看似已经很完美了，但如果
+我们吹毛求疵，一块内存有其固有的生命周期，使用了shared_ptr之后，可能会延长它的固有生命周期。
+3. 此时，我们引入weak_ptr，如果其生命周期已经结束，那就结束好了。同时，weak_ptr提供了我们这样的工具(promote)，让我们可以感知到这块内存已经失效，
+那我们不再访问即可。
+4. 即,我们可以使用shared_ptr来延长对象的生命周期，保证其在访问时的有效性，程序不coredump。也可以通过使用weak_ptr提供给我们的工具，判断一块内存的有效性，
+来确定是否访问，一样可以保证程序不coredump。所以，核心是为了解决程序不coredump，而raw pointer无法解决这个问题。
+
+补充一点，weak_ptr不能单独使用，需要和shared_ptr配合使用。
+
+先给出一个公共结构
+```cpp
+class Stock {
+ public:
+  explicit Stock(const std::string& key) : key_(key) {}
+  std::string GetKey() const { return key_; }
+
+ private:
+  std::string key_;
+};
+```
+
+- version1: shared_ptr
+
+```cpp
+namespace version1 {
+
+// shared_ptr
+class StockFactory {
+ public:
+  using StockPtr = std::shared_ptr<Stock>;
+
+  StockFactory() = default;
+
+  StockFactory(const StockFactory&) = delete;
+  StockFactory& operator=(const StockFactory&) = delete;
+
+  StockPtr GetStock(const std::string& key);
+
+ private:
+  MutexLock mtx_;
+  std::unordered_map<std::string, StockPtr> stock_factory_;
+};
+
+StockFactory::StockPtr StockFactory::GetStock(const std::string& key) {
+  MutexLockGuard mtx_guard(mtx_);
+  auto it = stock_factory_.find(key);
+  if (it == stock_factory_.end()) {
+    it->second = std::make_shared<Stock>(key);
+    // do something with new stock
+  }
+  return it->second;
+}
+
+}  // namespace version1
+```
+
+这个版本的问题在于，StockPtr是强引用，导致map里面会一直存着这个stock，即使外部没有人使用，也会一致存在
+
+- version2: weak_ptr
+
+```cpp
+namespace version2 {
+
+// weak_ptr
+class StockFactory {
+ public:
+  using StockPtr = std::weak_ptr<Stock>;
+
+  StockFactory() = default;
+
+  StockFactory(const StockFactory&) = delete;
+  StockFactory& operator=(const StockFactory&) = delete;
+
+  StockPtr GetStock(const std::string& key);
+
+ private:
+  MutexLock mtx_;
+  std::unordered_map<std::string, StockPtr> stock_factory_;
+};
+
+StockFactory::StockPtr StockFactory::GetStock(const std::string& key) {
+  std::shared_ptr<Stock> local_ptr;
+  MutexLockGuard mtx_guard(mtx_);
+  auto& wptr = stock_factory_[key];
+  local_ptr = wptr.lock();
+  if (!local_ptr) {
+    local_ptr.reset(new Stock(key));
+    wptr = local_ptr;
+  }
+  return local_ptr;
+}
+
+}  // namespace version2
+```
+
+这个版本解决了上一个版本的问题，如果外部的引用不存在，那么map中则不会存储这个版本。但是这个版本也会存在一个问题，
+即map中的key还一直存在，虽然value(smart pointer)已经不存在了。chenshuo认为这也是某种程度的“内存泄露”
+
+- version3: weak_ptr with this
+
+```cpp
+StockFactory::StockPtr StockFactory::GetStock(const std::string& key) {
+  std::shared_ptr<Stock> local_ptr;
+  MutexLockGuard mtx_guard(mtx_);
+  auto& wptr = stock_factory_[key];
+  local_ptr = wptr.lock();
+  if (!local_ptr) {
+    using namespace std::placeholders;
+    local_ptr.reset(new Stock(key), std::bind(&StockFactory::StockDeleter, this, _1));
+    wptr = local_ptr;
+  }
+  return local_ptr;
+}
+
+void StockFactory::StockDeleter(Stock* stock) {
+  if (stock) {
+    {
+      MutexLockGuard mtx_guard(mtx_);
+      stock_factory_.erase(stock->GetKey());
+    }
+    delete stock;
+  }
+}
+```
+
+这个版本通过析构回调的方式，解决了map中key的生命周期意外延长的问题。但是，这个版本有线程安全的问题，因为this是一个raw pointer。
+StockFactory可能先析构了，此时程序会coredump
+
+- version4: weak_ptr with enable_from_this
+
+```cpp
+namespace version4 {
+
+// weak_ptr with shared_from_this
+class StockFactory : public std::enable_shared_from_this<StockFactory> {
+ public:
+  using StockPtr = std::weak_ptr<Stock>;
+
+  StockFactory() = default;
+
+  StockFactory(const StockFactory&) = delete;
+  StockFactory& operator=(const StockFactory&) = delete;
+
+  StockPtr GetStock(const std::string& key);
+
+ private:
+  void StockDeleter(Stock*);
+
+ private:
+  MutexLock mtx_;
+  std::unordered_map<std::string, StockPtr> stock_factory_;
+};
+
+StockFactory::StockPtr StockFactory::GetStock(const std::string& key) {
+  std::shared_ptr<Stock> local_ptr;
+  MutexLockGuard mtx_guard(mtx_);
+  auto& wptr = stock_factory_[key];
+  local_ptr = wptr.lock();
+  if (!local_ptr) {
+    using namespace std::placeholders;
+    local_ptr.reset(new Stock(key), std::bind(&StockFactory::StockDeleter, shared_from_this(), _1));
+    wptr = local_ptr;
+  }
+  return local_ptr;
+}
+
+void StockFactory::StockDeleter(Stock* stock) {
+  if (stock) {
+    {
+      MutexLockGuard mtx_guard(mtx_);
+      stock_factory_.erase(stock->GetKey());
+    }
+    delete stock;
+  }
+}
+
+}  // namespace version4
+```
+
+这里通过shared_ptr来保证StockFactory访问时的有效性，但是这会带来另外一个问题，即这个对象的生命周期被延长了。我们的核心诉求是，程序在多线程环境下不
+出现coredump，延长对象的生命周期可以，但是我们如果能感知到对象是否存在，不存在时，不进行访问，一样可以保证程序不出现coredump
+
+- version5: weak_ptr with shared_from_this
+
+```cpp
+namespace version5 {
+
+// weak_ptr with weak_from_this
+class StockFactory : public std::enable_shared_from_this<StockFactory> {
+ public:
+  using StockPtr = std::weak_ptr<Stock>;
+
+  StockFactory() = default;
+
+  StockFactory(const StockFactory&) = delete;
+  StockFactory& operator=(const StockFactory&) = delete;
+
+  StockPtr GetStock(const std::string& key);
+
+ private:
+  static void StockDeleter(const std::weak_ptr<StockFactory>& wptr, Stock* stock);
+  void RemoveStock(Stock* stock);
+
+ private:
+  MutexLock mtx_;
+  std::unordered_map<std::string, StockPtr> stock_factory_;
+};
+
+StockFactory::StockPtr StockFactory::GetStock(const std::string& key) {
+  std::shared_ptr<Stock> local_ptr;
+  MutexLockGuard mtx_guard(mtx_);
+  auto& wptr = stock_factory_[key];
+  local_ptr = wptr.lock();
+  if (!local_ptr) {
+    using namespace std::placeholders;
+    local_ptr.reset(new Stock(key), std::bind(&StockFactory::StockDeleter, weak_from_this(), _1));
+    wptr = local_ptr;
+  }
+  return local_ptr;
+}
+
+void StockFactory::StockDeleter(const std::weak_ptr<StockFactory>& wptr, Stock* stock) {
+  auto sptr = wptr.lock();
+  if (sptr) {
+    sptr->RemoveStock(stock);
+  }
+  delete stock;
+}
+
+void StockFactory::RemoveStock(Stock* stock) {
+  if (stock) {
+    MutexLockGuard mtx_guard(mtx_);
+    stock_factory_.erase(stock->GetKey());
+  }
+}
+
+}  // namespace version5
+```
+
+到此，version5解决了以上出现的所有问题。额外有一点需要注意，enable_from_this只能和shared_ptr即dynamic object配合使用，stack object则不行。示例如下，
+
+```cpp
+int main(void) {
+  mymuduo::version1::StockFactory s1;
+  mymuduo::version2::StockFactory s2;
+  mymuduo::version3::StockFactory s3;
+  auto s4 = std::make_shared<mymuduo::version4::StockFactory>();
+  auto s5 = std::make_shared<mymuduo::version5::StockFactory>();
+  return 0;
+}
+```
+
+### 替代方案
+
+chenshuo讲了很多方案，个人觉得实践中比较有用的是,**只创建，不销毁**的手法。我在工作中碰到的一般都是一个单例对象可能面临这样的并发读写，所以销毁不是一个非常重要的考虑点。
+同时，这里我也引入我们自己经常使用的一个办法：[DoublyBufferedData](https://github.com/apache/incubator-brpc/blob/master/docs/cn/lalb.md#doublybuffereddata)这里给出
+的是一个brpc version的实现，非常完备。下面我给出一个我们自己实现的简单版本，核心思想是避免繁重的mutex开销
+
+```cpp
+MutexLock cout_mtx;
+struct Foo {
+  int val{0};
+};
+
+void ReadFoo(const std::shared_ptr<Foo>& ptr) {
+  MutexLockGuard mtx_guard(cout_mtx);
+  std::cout << ptr->val << std::endl;
+}
+
+void WriteFoo(const std::shared_ptr<Foo>& ptr) {
+  ++ptr->val;
+  {
+    MutexLockGuard mtx_guard(cout_mtx);
+    std::cout << "Write is done." << std::endl;
+  }
+}
+
+namespace version1 {
+
+std::shared_ptr<Foo> global_ptr;
+MutexLock ptr_mtx;
+
+void Read() {
+  std::shared_ptr<Foo> local_ptr;
+  {
+    MutexLockGuard mtx_guard(ptr_mtx);
+    local_ptr = global_ptr; // copy semantics is not heavy
+  }
+  ReadFoo(local_ptr);
+}
+
+void Write() {
+  std::shared_ptr<Foo> new_ptr = std::make_shared<Foo>();
+  WriteFoo(new_ptr);
+  {
+    MutexLockGuard mtx_guard(ptr_mtx);
+    global_ptr = new_ptr;
+  }
+}
+
+}  // namespace version1
+
+namespace version2 {
+
+class FooMgr {
+ public:
+  FooMgr(const FooMgr&) = delete;
+  FooMgr& operator=(const FooMgr&) = delete;
+
+  static FooMgr& GetInstance() {
+    static FooMgr foo_mgr;
+    return foo_mgr;
+  }
+
+  void Read() const {
+    auto local_ptr = dbd_[ver_];  // atomic var is not heavy
+    ReadFoo(dbd_[ver_]);
+  }
+
+  void Write() {
+    std::shared_ptr<Foo> new_ptr = std::make_shared<Foo>();
+    WriteFoo(new_ptr);
+    {
+      // switch ab side
+      auto new_ver = ++ver_ % kABSide;
+      dbd_[new_ver] = new_ptr;
+      ver_ = new_ver;
+    }
+  }
+
+ private:
+  FooMgr() {
+    for (int i = 0; i < kABSide; ++i) {
+      dbd_[i] = std::make_shared<Foo>();
+    }
+  }
+  ~FooMgr() = default;
+
+ private:
+  static constexpr int kABSide{2};
+  std::shared_ptr<Foo> dbd_[kABSide];
+  mutable std::atomic<int> ver_{0};
+};
+
+}  // namespace version2
+```
+
+### 心得与小结
+
+- raw pointer暴露给多个线程往往会造成race condition 或额外的簿记负担
+- 统一用shared_ptr/scoped_ptr 来管理对象的生命期，在多线程中尤其重要
+- shared_ptr 是值语意，当心意外延长对象的生命期。例如boost::bind 和容器
+都可能拷贝shared_ptr
+- weak_ptr 是shared_ptr 的好搭档，可以用作弱回调、对象池等
+- 尽可能缩短临界区
