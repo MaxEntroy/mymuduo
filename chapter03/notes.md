@@ -101,3 +101,71 @@ good start.
 同时既有计算，又有IO的服务，可以引入线程池来完成计算部分的工作。
 
 <img width="500"  src="img/multi-reactor.png"/>
+
+### 进程间通信只用TCP
+
+常见的IPC如下：
+- pipe
+- shared memory
+- posix mq
+- singal
+- socket
+
+关于IPC的选择，chenshuo的观点如下：
+>进程间通信我首选Sockets（主要指TCP，我没有用过UDP，也不考虑Unixdomain 协议），其最大的好处在于：
+可以跨主机，具有伸缩性。反正都是多进程了，如果一台机器的处理能力不够，很自然地就能用多台机器来处理。把进程分散到同一
+局域网的多台机器上，程序改改host:port 配置就能继续用。相反，前面列出的其他IPC 都不能跨机器10，这就限制了scalability。
+
+TCP socket具有如下优点：
+- 全双工(对比pipe)
+- 系统自动回收
+- tcp port由一个进程独占，防止程序重复启动
+- 两个进程通过TCP 通信，如果一个崩溃了，操作系统会关闭连接，另一个进程
+几乎立刻就能感知，可以快速failover。应用层只能依赖心跳
+- 可记录，可重现
+
+当然，TCP socket也存在一些缺点：
+- 有marshal/unmarshal的开销
+- 共享内存效率最高
+
+chenshuo这里也建议，即使单机，也没有必要为了一点性能的提升，而使用共享内存。按照我自己的经验来看，可不是这样，比如推荐的请求，通常网络包非常大，网络开销的节省通常会带来显著的性能收益。
+共享内存的问题在于，代码不好写，容易死锁。并且只能是单机，如果使用，意味着不同的服务有耦合。
+
+关于长短连接的选择，chenshuo建议只使用长连接，原因如下：
+- 一是容易定位分布式系统中的服务之间的依赖关系
+  - server side: ```netstat -tpna | grep :port```找出client port
+  - client side: ```lsof -i:port```找出客户端进程
+- 二是通过接收和发送队列的长度也较容易定位网络或程序故障
+  - ```netstat -tn```
+
+### 多线程服务器的适用场合
+
+这里先给出chenshuo整体的观点：
+- 分布式系统的软件设计和功能划分一般应该以"进程"为单位
+- 从宏观上看，一个分布式系统是由运行在多台机器上的多个进程组成的，进程之间采用TCP 长连接通信。
+- 本章讨论分布式系统中单个服务进程的设计方法。我提倡用多线程，并不是说把整个系统放到一个进程里实现，而是
+指功能划分之后，在实现每一类服务进程时，在必要时可以借助多线程来提高性能
+- 对于整个分布式系统，要做到能scale out，即享受增加机器带来的好处
+
+开发服务端程序的一个基本任务是处理并发连接，现在服务端网络编程处理并发连接主要有两种方式
+- 当"线程"很廉价时
+  - 一台机器上可以创建远高于CPU 数目的"线程"。
+  - 这时一个线程只处理一个TCP 连接（甚至半个），通常使用阻塞IO(至少看起来如此)
+  - 例如，Python gevent、Go goroutine、Erlang actor。这里的"线程"由语言的runtime 自行调度，与操作系统线程不是一回事
+- 当线程很宝贵时
+  - 一台机器上只能创建与CPU 数目相当的线程
+  - 这时一个线程要处理多个TCP 连接上的IO，通常使用非阻塞IO 和IO multiplexing
+  - libevent、muduo、Netty。这是原生线程，能被操作系统的任务调度器看见
+
+关于线程的理解，这里我多说一点。首先，不得不说的是，chenshuo这本书写于2012年，并且这是一本偏向于应用的书籍(对比apue/unp这种手册)，放在2022年的今天，重读起来发现任然不过时，并且其所讲的核心知识点，任然是广大linux cpp开发者所必备的技能。其次，我们来说下线程这个东西。
+
+"廉价的线程"用目前的术语来讲，说的是协程(coroutine/fiber这一类)。但其实，这个概念具备一定的迷惑性。因为看起来它好像和进程，线程均为kernel提供。但其实不是，chenshuo讲的也很清楚，这个东西
+kernel感知不到，完全是语言层面的产物。
+
+对于这个概念的理解，我倾向于用folly当中关于fiber的描述来理解：
+>Fibers (or coroutines) are lightweight application threads. Multiple fibers can be running on top of a single system thread. Unlike system threads, all the context switching between fibers is happening explicitly. Because of this every such context switch is very fast (~200 million of fiber context switches can be made per second on a single CPU core).
+
+很明显，folly将coroutines/fibers理解为lightweight application threads，有别于system threads，前者由语言层面进行调度。这个东西真正的好处是，虽然还是异步框架(本质是异步阻塞)，但是
+代码写起来像是同步代码。这里主要是为了优化之前的异步框架，即异步非阻塞，这种通常需要写回调，代码不好写，容器出错。
+
+我们可以看下2022年的当下，目前主流的rpc开发框架所支持的方式，baidu的brpc，tx的trpc采用了异步阻塞即协程的方式，具体支持了bthread/fiber这样的组件。搜狗的workflow则还是保持了之前异步回调的方式。
