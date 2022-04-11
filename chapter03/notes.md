@@ -168,4 +168,4 @@ kernel感知不到，完全是语言层面的产物。
 很明显，folly将coroutines/fibers理解为lightweight application threads，有别于system threads，前者由语言层面进行调度。这个东西真正的好处是，虽然还是异步框架(本质是异步阻塞)，但是
 代码写起来像是同步代码。这里主要是为了优化之前的异步框架，即异步非阻塞，这种通常需要写回调，代码不好写，容器出错。
 
-我们可以看下2022年的当下，目前主流的rpc开发框架所支持的方式，baidu的brpc，tx的trpc采用了异步阻塞即协程的方式，具体支持了bthread/fiber这样的组件。搜狗的workflow则还是保持了之前异步回调的方式。
+我们可以看下2022年的当下，目前主流的rpc开发框架所支持的方式，baidu的brpc，tx的trpc采用了异步阻塞(即协程)的方式，具体支持了bthread/fiber这样的组件。搜狗的workflow则还是保持了之前异步非阻塞(即回调)的方式。
