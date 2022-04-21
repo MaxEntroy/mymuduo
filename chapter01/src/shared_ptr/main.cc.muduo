@@ -1,30 +1,35 @@
-#include <pthread.h>
-#include <sys/time.h>
-
 #include <atomic>
 #include <iostream>
 #include <memory>
-#include <mutex>
-#include <shared_mutex>
+#include <pthread.h>
+#include <sys/time.h>
+#include <unistd.h>
+#include "mutex.h"
 
+using namespace mymuduo;
 using RoutineType = void*(*)(void *);
-using WriteLock = std::unique_lock<std::shared_mutex>;
-using ReadLock = std::shared_lock<std::shared_mutex>;
 
 constexpr int kReaderNum = 1 << 3;
 constexpr int kReadIterNum = 1 << 20; // almost 2 millon
 constexpr int kWriteIterNum = 1 << 1;
 
+//MutexLock cout_mtx;
 struct Foo {
   int val{0};
 };
 
 int ReadFoo(const std::shared_ptr<Foo>& ptr) {
+  //MutexLockGuard mtx_guard(cout_mtx);
+  //std::cout << "Reader: " << ptr->val << std::endl;
   return ptr->val;
 }
 
 void WriteFoo(const std::shared_ptr<Foo>& ptr, int new_val) {
   ptr->val = new_val;
+  //{
+  //  MutexLockGuard mtx_guard(cout_mtx);
+  //  std::cout << "Writer: done."  << std::endl;
+  //}
 }
 
 long long current_timestamp() {
@@ -37,12 +42,12 @@ long long current_timestamp() {
 namespace version1 {
 
 std::shared_ptr<Foo> global_ptr = std::make_shared<Foo>();
-std::mutex ptr_mtx;
+MutexLock ptr_mtx;
 
 void Reader() {
   std::shared_ptr<Foo> local_ptr;
   {
-    std::lock_guard<std::mutex> mtx_guard(ptr_mtx);
+    MutexLockGuard mtx_guard(ptr_mtx);
     local_ptr = global_ptr; // copy semantics is not heavy
   }
   ReadFoo(local_ptr);
@@ -52,7 +57,7 @@ void Writer(int new_val) {
   std::shared_ptr<Foo> new_ptr = std::make_shared<Foo>();
   WriteFoo(new_ptr, new_val);
   {
-    std::lock_guard<std::mutex> mtx_guard(ptr_mtx);
+    MutexLockGuard mtx_guard(ptr_mtx);
     global_ptr = new_ptr;
   }
 }
@@ -74,45 +79,6 @@ void* WriteRoutine(void* args) {
 }  // namespace version1
 
 namespace version2 {
-
-std::shared_ptr<Foo> global_ptr = std::make_shared<Foo>();
-std::shared_mutex ptr_mtx;
-
-void Reader() {
-  std::shared_ptr<Foo> local_ptr;
-  {
-    ReadLock r_lock_guard(ptr_mtx);
-    local_ptr = global_ptr; // copy semantics is not heavy
-  }
-  ReadFoo(local_ptr);
-}
-
-void Writer(int new_val) {
-  std::shared_ptr<Foo> new_ptr = std::make_shared<Foo>();
-  WriteFoo(new_ptr, new_val);
-  {
-    WriteLock w_lock_guard(ptr_mtx);
-    global_ptr = new_ptr;
-  }
-}
-
-void* ReadRoutine(void* args) {
-  for (int i = 0; i < kReadIterNum; ++i) {
-    Reader();
-  }
-  return nullptr;
-}
-
-void* WriteRoutine(void* args) {
-  for (int i = 0; i < kWriteIterNum; ++i) {
-    Writer(i + 1);
-  }
-  return nullptr;
-}
-
-}  // namespace version2
-
-namespace version3 {
 
 class FooMgr {
  public:
@@ -168,11 +134,12 @@ void* WriteRoutine(void* args) {
   return nullptr;
 }
 
-}  // namespace version3
+}  // namespace version2
 
-namespace version4 {
+namespace version3 {
 
 std::shared_ptr<Foo> global_ptr = std::make_shared<Foo>();
+MutexLock ptr_mtx;
 
 void Reader() {
   auto local_ptr = atomic_load(&global_ptr);
@@ -199,7 +166,7 @@ void* WriteRoutine(void* args) {
   return nullptr;
 }
 
-}  // namespace version4
+}  // namespace version3
 
 void benchmark(RoutineType read_routine, RoutineType write_routine) {
   pthread_t tid_readers[kReaderNum];
@@ -225,9 +192,11 @@ void benchmark(RoutineType read_routine, RoutineType write_routine) {
 }
 
 int main(void) {
+  // Intel(R) Core(TM) i7-7700 CPU @ 3.60GHz
+  // 4 cores
+
   benchmark(version1::ReadRoutine, version1::WriteRoutine);  // almost 700ms
-  benchmark(version2::ReadRoutine, version1::WriteRoutine);  // almost 700ms
-  benchmark(version3::ReadRoutine, version3::WriteRoutine);  // almost 300ms
-  benchmark(version4::ReadRoutine, version4::WriteRoutine);  // almost 900ms
+  benchmark(version2::ReadRoutine, version2::WriteRoutine);  // almost 300ms
+  benchmark(version3::ReadRoutine, version3::WriteRoutine);  // almost 900ms
   return 0;
 }
