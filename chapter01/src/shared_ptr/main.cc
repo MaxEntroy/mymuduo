@@ -135,7 +135,7 @@ class FooMgr {
     {
       // switch ab side
       auto new_ver = ++ver_ % kABSide;
-      dbd_[new_ver].swap(new_ptr);  // asignment will leads to coredump
+      dbd_[new_ver].swap(new_ptr);  // asignment leads to coredump
       ver_ = new_ver;
     }
   }
