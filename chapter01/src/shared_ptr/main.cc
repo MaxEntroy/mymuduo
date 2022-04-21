@@ -2,35 +2,49 @@
 #include <iostream>
 #include <memory>
 #include <pthread.h>
+#include <sys/time.h>
 #include <unistd.h>
 #include "mutex.h"
 
 using namespace mymuduo;
+using RoutineType = void*(*)(void *);
 
-MutexLock cout_mtx;
+constexpr int kReaderNum = 1 << 3;
+constexpr int kReadIterNum = 1 << 20; // almost 2 millon
+constexpr int kWriteIterNum = 1 << 1;
+
+//MutexLock cout_mtx;
 struct Foo {
   int val{0};
 };
 
-void ReadFoo(const std::shared_ptr<Foo>& ptr) {
-  MutexLockGuard mtx_guard(cout_mtx);
-  std::cout << ptr->val << std::endl;
+int ReadFoo(const std::shared_ptr<Foo>& ptr) {
+  //MutexLockGuard mtx_guard(cout_mtx);
+  //std::cout << "Reader: " << ptr->val << std::endl;
+  return ptr->val;
 }
 
-void WriteFoo(const std::shared_ptr<Foo>& ptr) {
-  ++ptr->val;
-  {
-    MutexLockGuard mtx_guard(cout_mtx);
-    std::cout << "Write is done." << std::endl;
-  }
+void WriteFoo(const std::shared_ptr<Foo>& ptr, int new_val) {
+  ptr->val = new_val;
+  //{
+  //  MutexLockGuard mtx_guard(cout_mtx);
+  //  std::cout << "Writer: done."  << std::endl;
+  //}
+}
+
+long long current_timestamp() {
+    struct timeval te;
+    gettimeofday(&te, NULL); // get current time
+    long long milliseconds = te.tv_sec*1000LL + te.tv_usec/1000; // calculate milliseconds
+    return milliseconds;
 }
 
 namespace version1 {
 
-std::shared_ptr<Foo> global_ptr;
+std::shared_ptr<Foo> global_ptr = std::make_shared<Foo>();
 MutexLock ptr_mtx;
 
-void Read() {
+void Reader() {
   std::shared_ptr<Foo> local_ptr;
   {
     MutexLockGuard mtx_guard(ptr_mtx);
@@ -39,13 +53,27 @@ void Read() {
   ReadFoo(local_ptr);
 }
 
-void Write() {
+void Writer(int new_val) {
   std::shared_ptr<Foo> new_ptr = std::make_shared<Foo>();
-  WriteFoo(new_ptr);
+  WriteFoo(new_ptr, new_val);
   {
     MutexLockGuard mtx_guard(ptr_mtx);
     global_ptr = new_ptr;
   }
+}
+
+void* ReadRoutine(void* args) {
+  for (int i = 0; i < kReadIterNum; ++i) {
+    Reader();
+  }
+  return nullptr;
+}
+
+void* WriteRoutine(void* args) {
+  for (int i = 0; i < kWriteIterNum; ++i) {
+    Writer(i + 1);
+  }
+  return nullptr;
 }
 
 }  // namespace version1
@@ -62,18 +90,18 @@ class FooMgr {
     return foo_mgr;
   }
 
-  void Read() const {
+  void Reader() const {
     auto local_ptr = dbd_[ver_];  // atomic var is not heavy
-    ReadFoo(dbd_[ver_]);
+    ReadFoo(local_ptr);
   }
 
-  void Write() {
+  void Writer(int new_val) {
     std::shared_ptr<Foo> new_ptr = std::make_shared<Foo>();
-    WriteFoo(new_ptr);
+    WriteFoo(new_ptr, new_val);
     {
       // switch ab side
       auto new_ver = ++ver_ % kABSide;
-      dbd_[new_ver] = new_ptr;
+      dbd_[new_ver].swap(new_ptr);  // asignment will leads to coredump
       ver_ = new_ver;
     }
   }
@@ -92,31 +120,83 @@ class FooMgr {
   mutable std::atomic<int> ver_{0};
 };
 
+void* ReadRoutine(void* args) {
+  for (int i = 0; i < kReadIterNum; ++i) {
+    FooMgr::GetInstance().Reader();
+  }
+  return nullptr;
+}
+
+void* WriteRoutine(void* args) {
+  for (int i = 0; i < kWriteIterNum; ++i) {
+    FooMgr::GetInstance().Writer(i + 1);
+  }
+  return nullptr;
+}
+
 }  // namespace version2
 
+namespace version3 {
+
+std::shared_ptr<Foo> global_ptr = std::make_shared<Foo>();
+MutexLock ptr_mtx;
+
+void Reader() {
+  auto local_ptr = atomic_load(&global_ptr);
+  ReadFoo(local_ptr);
+}
+
+void Writer(int new_val) {
+  std::shared_ptr<Foo> new_ptr = std::make_shared<Foo>();
+  WriteFoo(new_ptr, new_val);
+  std::atomic_exchange(&global_ptr, new_ptr);
+}
+
 void* ReadRoutine(void* args) {
-  for (int i = 0; i < 8; ++i) {
-    version2::FooMgr::GetInstance().Read();
-    sleep(1);
+  for (int i = 0; i < kReadIterNum; ++i) {
+    Reader();
   }
   return nullptr;
 }
+
 void* WriteRoutine(void* args) {
-  version2::FooMgr::GetInstance().Write();
+  for (int i = 0; i < kWriteIterNum; ++i) {
+    Writer(i + 1);
+  }
   return nullptr;
 }
 
-int main() {
-  pthread_t tid1, tid2;
-  if (pthread_create(&tid1, nullptr, ReadRoutine, nullptr)) {
-    exit(EXIT_FAILURE);
+}  // namespace version3
+
+void benchmark(RoutineType read_routine, RoutineType write_routine) {
+  pthread_t tid_readers[kReaderNum];
+  pthread_t tid_writer;
+
+  auto begin = current_timestamp();
+  for (int i = 0; i < kReaderNum; ++i) {
+    if (pthread_create(tid_readers + i, nullptr, read_routine, nullptr)) {
+      exit(EXIT_FAILURE);
+    }
   }
-  if (pthread_create(&tid2, nullptr, WriteRoutine, nullptr)) {
+  if (pthread_create(&tid_writer, nullptr, write_routine, nullptr)) {
     exit(EXIT_FAILURE);
   }
 
-  pthread_join(tid1, nullptr);
-  pthread_join(tid2, nullptr);
+  for (int i = 0; i < kReaderNum; ++i) {
+    pthread_join(tid_readers[i], nullptr);
+  }
+  pthread_join(tid_writer, nullptr);
+  auto end = current_timestamp();
 
+  std::cout << "Time elapsed(ms):" << end - begin << std::endl;
+}
+
+int main(void) {
+  // Intel(R) Core(TM) i7-7700 CPU @ 3.60GHz
+  // 4 cores
+
+  benchmark(version1::ReadRoutine, version1::WriteRoutine);
+  benchmark(version2::ReadRoutine, version2::WriteRoutine);
+  benchmark(version3::ReadRoutine, version3::WriteRoutine);
   return 0;
 }
