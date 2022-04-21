@@ -12,7 +12,7 @@ using WriteLock = std::unique_lock<std::shared_mutex>;
 using ReadLock = std::shared_lock<std::shared_mutex>;
 
 constexpr int kReaderNum = 1 << 3;
-constexpr int kReadIterNum = 1 << 20; // almost 2 millon
+constexpr int kReadIterNum = 1 << 21; // almost 2 millon
 constexpr int kWriteIterNum = 1 << 1;
 
 struct Foo {
@@ -225,9 +225,9 @@ void benchmark(RoutineType read_routine, RoutineType write_routine) {
 }
 
 int main(void) {
-  benchmark(version1::ReadRoutine, version1::WriteRoutine);  // almost 700ms
-  benchmark(version2::ReadRoutine, version1::WriteRoutine);  // almost 700ms
-  benchmark(version3::ReadRoutine, version3::WriteRoutine);  // almost 300ms
-  benchmark(version4::ReadRoutine, version4::WriteRoutine);  // almost 900ms
+  benchmark(version1::ReadRoutine, version1::WriteRoutine);  // almost 1300ms
+  benchmark(version2::ReadRoutine, version2::WriteRoutine);  // almost 1600ms
+  benchmark(version3::ReadRoutine, version3::WriteRoutine);  // almost 600ms
+  benchmark(version4::ReadRoutine, version4::WriteRoutine);  // almost 1700ms
   return 0;
 }
