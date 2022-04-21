@@ -195,8 +195,8 @@ int main(void) {
   // Intel(R) Core(TM) i7-7700 CPU @ 3.60GHz
   // 4 cores
 
-  benchmark(version1::ReadRoutine, version1::WriteRoutine);
-  benchmark(version2::ReadRoutine, version2::WriteRoutine);
-  benchmark(version3::ReadRoutine, version3::WriteRoutine);
+  benchmark(version1::ReadRoutine, version1::WriteRoutine);  // almost 700ms
+  benchmark(version2::ReadRoutine, version2::WriteRoutine);  // almost 300ms
+  benchmark(version3::ReadRoutine, version3::WriteRoutine);  // almost 900ms
   return 0;
 }
