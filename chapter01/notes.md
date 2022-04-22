@@ -593,7 +593,7 @@ class FooMgr {
     WriteFoo(new_ptr);
     {
       // switch ab side
-      auto new_ver = ++ver_ % kABSide;
+      auto new_ver = (ver_ + 1) % kABSide;
       dbd_[new_ver] = new_ptr;
       ver_ = new_ver;
     }
@@ -622,5 +622,5 @@ class FooMgr {
 - 统一用shared_ptr/scoped_ptr 来管理对象的生命期，在多线程中尤其重要
 - shared_ptr 是值语意，当心意外延长对象的生命期。例如boost::bind 和容器
 都可能拷贝shared_ptr
-- weak_ptr 是shared_ptr 的好搭档，可以用作弱回调、对象池等
+- weak_ptr 是shared_ptr的好搭档，可以用作弱回调、对象池等
 - 尽可能缩短临界区

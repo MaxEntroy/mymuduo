@@ -134,8 +134,8 @@ class FooMgr {
     WriteFoo(new_ptr, new_val);
     {
       // switch ab side
-      auto new_ver = ++ver_ % kABSide;
-      dbd_[new_ver].swap(new_ptr);  // asignment leads to coredump
+      auto new_ver = (ver_ + 1) % kABSide;
+      dbd_[new_ver].swap(new_ptr);
       ver_ = new_ver;
     }
   }
