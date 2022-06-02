@@ -24,3 +24,4 @@ clean:
 
 main.o: main.cc condition.h mutex.h
 count_down_latch.o: count_down_latch.cc count_down_latch.h
+thread.o: thread.cc thread.h
