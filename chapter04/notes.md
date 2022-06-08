@@ -106,7 +106,7 @@ When a thread reads a value from a memory location, it may see the initial value
 - memory_order_acquire:A load operation with this memory order performs the acquire operation on the affected memory location: no reads or writes in the current thread can be reordered before this load. All writes in other threads that release the same atomic variable are visible in the current thread (see Release-Acquire ordering below)
 - memory_order_release:A store operation with this memory order performs the release operation: no reads or writes in the current thread can be reordered after this store. All writes in the current thread are visible in other threads that acquire the same atomic variable (see Release-Acquire ordering below) and writes that carry a dependency into the atomic variable become visible in other threads that consume the same atomic (see Release-Consume ordering below).
 
-memory_order_acquire约定读操作的同步机制，即当前读指令之后的指令，不允许指令重排到当前读指令之前，保证读指令的完备(读之前的状态不会有改变，避免读不一致，不允许多度)
+memory_order_acquire约定读操作的同步机制，即当前读指令之后的指令，不允许指令重排(compiler reordering)到当前读指令之前，保证读指令的完备(读之前的状态不会有改变，避免读不一致，不允许多度)
 memory_order_release约定写操作的同步机制，即当前写指令之前的指令，不允许指令重排到当前写指令之后，保证写指令的完备(写之后的状态都执行了，避免写不一致，不允许少写)
 
 接着我们看一个基于dclp的单例实现：
@@ -164,3 +164,104 @@ static std::atomic<T *> instance_;
 这是因为fence的效果要比基于原子变量的效果更强，具体细节的差异这里不展开。主要需要明白的是保证对于instance_指针的更新，必须在对象创建完成之后才可以。
 
 最后，这里再说一点，原子操作只是保证了对于变量的操作是原子化的，和是否指令重排没有关系。但是，cpp的std::atomic<T>结合了memory_order，可以实现对应的memory barrier功能，这点注意。同时cpp也提供了atomic_thread_fence配合memory_order来实现memory barrier的功能。
+
+#### Allocator
+
+kernel提供了brk/sbrk, mmap来申请内存，但是这3个API均是system call，如果应用程序频繁调用，则会影响性能。glibc提供了ptmalloc作为app与kernel之间的中间层，支持内存申请的功能，本质是池化资源的体现。对于app来说，可以使用malloc/free来进行内存的申请与释放。虽然man manual也提供了malloc/free的说明，但它们并不是system call.
+
+这里单独提到ptmalloc的原因是，内存管理相关的函数，会影响全局状态，所以需要保证线程安全，一般的做法是通过加锁来实现。
+
+#### 线程安全的函数一定能保证代码正确性嘛？
+
+这个不一定，编写线程安全程序的一个难点在于线程安全是不可组合的。这种情况我们之前其实遇到过，比如data race free的函数，不一定没有race condition.一个函数foo调用了两个线程安全的函数，但foo可能不是线程安全的。我们看下面这个demo
+
+```cpp
+// 获取伦敦的当前时间
+string oldTz = getenv("TZ"); // save TZ, assumeing non-NULL
+putenv("TZ=Europe/London"); // set TZ to London
+tzset(); // load London time zone
+
+struct tm localTimeInLN;
+time_t now = time(NULL); // get time in UTC
+localtime_r(&now, &localTimeInLN); // convert to London local time
+setenv("TZ", oldTz.c_str(), 1); // restore old TZ
+tzset(); // local old time zone
+```
+
+tzset函数本身是线程安全的，但是它会改变全局状态(当前时区)，有可能会影响其他代码的转化。
+
+我们不必担心系统调用的线程安全性，因为系统调用对于用户态程序来说是原子的。但是要注意系统调用对于内核状态的改变可能影响其他线程。
+
+### Linux上的线程标识
+
+首先看下面这段代码，其中打印输出的t1,t2可能一样。
+```cpp
+int main(void)
+{
+  pthread_t t1, t2;
+  pthread_create(&t1, NULL, threadFunc, NULL);
+  printf("%lx\n", t1);
+  pthread_join(t1, NULL);
+
+  pthread_create(&t2, NULL, threadFunc, NULL);
+  printf("%lx\n", t2);
+  pthread_join(t2, NULL);
+  return 0;
+}
+```
+
+这里主要涉及到pthread_t这个类型的实现，具体来说。pthread_t 不一定是一个数值类型(整数或指针)，也有可能是一个结构体.
+另外，glibc 的Pthreads 实现实际上把pthread_t 用作一个结构体指针（它的类型是unsigned long），指向一块动态分配的内存，而且这块内存是反复使用的。这就造成pthread_t 的值很容易重复
+
+**Pthreads只保证同一进程之内，同一时刻的各个线程的id不同**，因此pthread_t不适合作为线程标识。muduo中建议使用gettid作为线程标识。
+
+```cpp
+pid_t gettid() {
+  return static_cast<pid_t>(::syscall(SYS_gettid))
+}
+
+void CurrentThread::cacheTid() {
+  if (t_cachedTid == 0) {  // __thread int t_cachedTid = 0;
+      t_cachedTid = gettid();
+  }
+}
+
+int CurrentThread::tid() {
+  if (__builtin_expect(t_cachedTid == 0, 0)) {
+    cacheTid();
+  }
+  return t_cachedTid;
+}
+```
+
+简单说一下上面的代码，gettid采用了system call，反复调用影响性能。所以用__thread进行了thread storage cache。同时，使用unlikely优化分支预测，性能无忧。
+
+### 线程创建与销毁规则
+
+线程的创建和销毁是编写多线程程序的基本要素，线程的创建比销毁要容易得多，只需要遵循几条简单的原则
+- 程序库不应该在未提前告知的情况下创建自己的"背景线程"
+- 尽量用相同的方式创建线程，例如muduo::Thread
+- 在进入main()函数之前不应该启动线程(这点特别注意！！！)
+- 程序中线程的创建最好能在初始化阶段全部完成
+
+这里主要说一下第3点，为什么不能在进入main()之前启动线程，主要是因为这回影响global object的安全构造。关于global object的构造，我们知道
+- C++保证在进入main()之前完成全局对象的构造
+- 同时，各个编译单元之间的对象构造顺序是不确定的
+
+我们也有一些办法来影响初始化顺序，保证在初始化某个全局对象时使用到的其他全局对象都是构造完成的。但无论如何这些全局对象的构造是依次进行的，都在主线程中完成，无须考虑并发与线程安全
+如果其中一个全局对象创建了线程，那就危险了。因为这破坏了初始化全局对象的基本假设。如果子线程访问了还未初始化完成的全局对象，代码可能coredump，同时不好查。
+
+线程的销毁有几种方式
+- 自然死亡。从线程主函数返回，线程正常退出。
+- 非正常死亡。从线程主函数抛出异常或线程触发segfault信号等非法操作
+- 自杀。在线程中调用pthread_exit() 来立刻退出线程
+- 他杀。其他线程调用pthread_cancel() 来强制终止某个线程
+
+```pthread_kill```只是向线程发信号，暂不讨论。
+
+**线程正常退出的方式只有一种，即自然死亡。任何从外部强行终止线程的做法和想法都是错的。**其背后的逻辑如下
+- 强行终止线程的话（无论是自杀还是他杀），它没有机会清理资源
+- 没有机会释放已经持有的锁，其他线程如果再想对同一个mutex 加锁，那么就会立刻死锁。
+- 如果非要杀掉一个线程(长时间计算)，可以考虑把这部分代码放到进程里，用杀进程替换杀线程。
+
+如果线程管理可以做成池化资源的形式，则不必担心销毁的问题。
