@@ -1,6 +1,4 @@
-#include <pthread.h>
-
-#include "count_down_latch.h"
+#pragma once
 
 namespace mymuduo {
 

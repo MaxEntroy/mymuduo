@@ -265,3 +265,115 @@ int CurrentThread::tid() {
 - 如果非要杀掉一个线程(长时间计算)，可以考虑把这部分代码放到进程里，用杀进程替换杀线程。
 
 如果线程管理可以做成池化资源的形式，则不必担心销毁的问题。
+
+### 善用__thread关键字
+
+由于chenshuo在写muduo的时候，c11尚未流行开来，所以此处讲的还是__thread. c11之后，引入了thread_local keyword，我们先回顾一些这个概念，再看chenshuo给出的使用建议。
+
+Storage duration: Every object has a property called storage duration, which limits the object lifetime. 
+- automatic storage duration.
+- static storage duration.
+- thread storage duration.
+- allocated storage duration.
+
+对于此，我们最关心的还是，其对应的物理内存到底在哪里？(哪个段) automatic/static/allocated都非常清楚，分别位于stack/.bss or .data/heap，但是thread_local位于哪里？
+根据我之前的总结[thread_local](https://github.com/MaxEntroy/notes/blob/master/public_articles/tech/thread_local.md)，可以确定其位于.tbss or .tbdata
+
+但是对于.tdata/.tbss具体的存储，暂时我还不清楚，但是根据km上的总结，它的实现可能会挤压栈空间，要有这个意识就好。
+
+下面我们看下chenshuo给出的建议：
+- __thread存取效率堪比全局变量，效率高
+- __thread只能修饰POD类型
+- __thread变量的初始化，只能用编译期常量
+- __thread只能修改全局变量 and 函数内静态变量(注意，全局or函数内，是作用域，和lifetime没有关系，不要混淆)
+
+关于第3点，参见如下代码
+```cpp
+__thread string t_obj1("Chen Shuo"); // 错误，不能调用对象的构造函数
+__thread string* t_obj2 = new string; // 错误，初始化必须用编译期常量
+__thread string* t_obj3 = NULL; // 正确，但是需要手工初始化并销毁对象
+```
+
+关于__thread的使用场景
+- __thread是每个线程有一份独立实体，各个线程的变量值互不干扰，这是主要用途。wiki上的引子就是这个，讲了unix errno在多线程环境下面临的问题。
+- 它还可以修饰那些"值可能会变，带有全局性，但又不值得使用全局锁保护的变量"。这个wiki上的第二个例子就是，一个全局counter，多线程写，加锁。不如先用thread_local，最后merge
+
+关于非POD类型，muduo封装了ThreadLocal<T>类支持非POD类型，线程退出时进行销毁。其大致封装原理如下(以posix implementation为例)
+- In the Pthreads API, memory local to a thread is designated with the term Thread-specific data.
+- The functions pthread_key_create and pthread_key_delete are used respectively to create and delete a key for thread-specific data. 
+- The type of the key is explicitly left opaque and is referred to as pthread_key_t
+- This key can be seen by all threads. In each thread, the key can be associated with thread-specific data via pthread_setspecific. The data can later be retrieved using pthread_getspecific
+- In addition pthread_key_create can optionally accept a destructor function that will automatically be called at thread exit
+
+```cpp
+template<typename T>
+class ThreadLocal {
+ public:
+  ThreadLocal() { MCHECK(pthread_key_create(&pkey_, ThreadLocal::dtor)); }
+
+  ~ThreadLocal() { MCHECK(pthread_key_delete(pkey_)); }
+
+  ThreadLocal(const ThreadLocal&) = delete;
+  ThreadLocal& operator=(const ThreadLocal&) = delete;
+
+  T& value() {
+    T* per_thread_val = static_cast<T*>(pthread_getspecific(pkey_));
+    if (!per_thread_val) {
+      T* val = new T();
+      MCHECK(pthread_setspecific(pkey_, val));
+      per_thread_val = val;
+    }
+    return *per_thread_val;
+  }
+
+ private:
+  static void dtor(void* x) {
+    T* obj = static_cast<T*>(x);
+    typedef char T_must_be_complete_type[sizeof(T) == 0 ? -1 : 0];
+    T_must_be_complete_type dummy; (void) dummy;
+    delete obj;
+  }
+
+ private:
+  pthread_key_t pkey_;
+};
+```
+
+对于__thread/ThreadLocal<T>编码时最大的便利之处在于**一处定义，多个实例**。回想non-thread-local var，都是需要几个，定义几个。但是tls的方便之处在于，定义/操作的时候，只定义/操作一个。
+不同的线程会生成各自的独一份存储。线程读写的时候，虽然操作的是同一个变量，但实际操作的是不同线程的tls var.
+
+看下面这部分代码片段，test_obj定义/操作均是针对同一个对象，但实际上操作的是不同的tls var,因而也不用加锁。
+
+```cpp
+mymuduo::ThreadLocal<Foo> test_obj;
+
+void Print() {
+  printf("tid=%d, addr=%p, name=%s\n",
+         ::mymuduo::CurrentThread::Tid(),
+         &test_obj.value(),
+         test_obj.value().Name().c_str());
+}
+
+void* ThreadRoutine1(void* arg) {
+  Print();
+  test_obj.value().SetName("thread routine1");
+  Print();
+
+  (void) arg;
+  return nullptr;
+}
+
+void* ThreadRoutine2(void* arg) {
+  Print();
+  test_obj.value().SetName("thread routine2");
+  Print();
+
+  (void) arg;
+  return nullptr;
+}
+```
+
+下面我们讨论以下__thread和c11之后标准提供的thread_local的异同
+
+- 修饰范围: global and static variables，一致
+- 修饰类型: thread_local支持非POD类型
