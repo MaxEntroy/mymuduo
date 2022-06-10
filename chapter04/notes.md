@@ -375,5 +375,25 @@ void* ThreadRoutine2(void* arg) {
 
 下面我们讨论以下__thread和c11之后标准提供的thread_local的异同
 
-- 修饰范围: global and static variables，一致
-- 修饰类型: thread_local支持非POD类型
+- 修饰变量种类
+  - __thread:global, file-scoped static, function-scoped static, or static data member of a class. It may not be applied to block-scoped automatic or non-static data member
+  - thread_local:本质上和__thread一样，但是其可以修饰block-scoped automatic var，但是根据std我们知道When thread_local is applied to a variable of block scope the storage-class-specifier static is implied
+- 修饰变量类型
+  - __thread: 仅支持POD，不支持non-local，原因在于无法主动调用ctor/dtor.但是可以通过ptr to non-local解决，后者需要programmer自己管理heap
+  - thread_local: 无限制
+- 初始化
+  - __thread: constant-expression
+  - thread_local: default initialization(不一定常量)
+
+下面着重说一下thread_local penalty, 这点__thread没有
+
+So the run-time penalty is that, every reference of the thread_local variable will become a function call(wrappter).This wrapper is not needed for in every use case of thread_local though. This can be revealed from decl2.c. The wrapper is generated only when
+- It is extern (the example shown above), or
+- The type has a non-trivial destructor (which is not allowed for __thread variables), or
+- The type variable is initialized by a non-constant-expression (which is also not allowed for __thread variables).
+
+In all other use cases, it behaves the same as __thread. That means, unless you have some extern __thread variables, you could replace all __thread by thread_local without any loss of performance.
+
+### Ref
+[https://gcc.gnu.org/onlinedocs/gcc-4.7.2/gcc/Thread_002dLocal.html](https://gcc.gnu.org/onlinedocs/gcc-4.7.2/gcc/Thread_002dLocal.html)
+[What is the performance penalty of C++11 thread_local variables in GCC 4.8?](https://stackoverflow.com/questions/13106049/what-is-the-performance-penalty-of-c11-thread-local-variables-in-gcc-4-8)
