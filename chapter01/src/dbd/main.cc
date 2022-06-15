@@ -15,7 +15,7 @@
 using RoutineType = void*(*)(void *);
 
 constexpr int kReaderNum = 1 << 3;
-constexpr int kReadIterNum = 1 << 22; // almost 4 millon
+constexpr int kReadIterNum = 1 << 25; // 32000000
 constexpr int kWriteIterNum = 1 << 1;
 
 struct Foo {
@@ -452,10 +452,14 @@ void test_version4() { benchmark(version4::ReadRoutine, version4::WriteRoutine);
 void test_version5() { benchmark(version5::ReadRoutine, version5::WriteRoutine); }
 
 int main(void) {
+  printf("we need you to start(type anything):");
+  getchar();
+  printf("process is running.\n");
+
   ProfilerStart("dbd_benchmark.prof");
-  //test_version3();  // almost 1200ms
-  test_version4();  // almost 1200ms
-  test_version5();  // almost 170ms
+  //test_version3();
+  test_version4();  // almost 10000ms
+  test_version5();  // almost 1200ms
   ProfilerStart("dbd_benchmark.prof");
   return 0;
 }
