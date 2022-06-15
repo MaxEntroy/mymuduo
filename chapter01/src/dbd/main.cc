@@ -7,13 +7,15 @@
 #include <memory>
 #include <vector>
 
+#include "gperftools/profiler.h"
+
 #include "common.h"
 #include "mutex.h"
 
 using RoutineType = void*(*)(void *);
 
 constexpr int kReaderNum = 1 << 3;
-constexpr int kReadIterNum = 1 << 21; // almost 2 millon
+constexpr int kReadIterNum = 1 << 22; // almost 4 millon
 constexpr int kWriteIterNum = 1 << 1;
 
 struct Foo {
@@ -443,11 +445,17 @@ void benchmark(RoutineType read_routine, RoutineType write_routine) {
   printf("Time elapsed(ms):%lld.\n", end - begin);
 }
 
+void test_version1() { benchmark(version1::ReadRoutine, version1::WriteRoutine); }
+void test_version2() { benchmark(version2::ReadRoutine, version2::WriteRoutine); }
+void test_version3() { benchmark(version3::ReadRoutine, version3::WriteRoutine); }
+void test_version4() { benchmark(version4::ReadRoutine, version4::WriteRoutine); }
+void test_version5() { benchmark(version5::ReadRoutine, version5::WriteRoutine); }
+
 int main(void) {
-  //benchmark(version1::ReadRoutine, version1::WriteRoutine);
-  //benchmark(version2::ReadRoutine, version2::WriteRoutine);
-  benchmark(version3::ReadRoutine, version3::WriteRoutine);  // almost 610-620ms
-  benchmark(version4::ReadRoutine, version4::WriteRoutine);  // almost 600-620ms
-  benchmark(version5::ReadRoutine, version5::WriteRoutine);  // almost 80-90ms
+  ProfilerStart("dbd_benchmark.prof");
+  //test_version3();  // almost 1200ms
+  test_version4();  // almost 1200ms
+  test_version5();  // almost 170ms
+  ProfilerStart("dbd_benchmark.prof");
   return 0;
 }

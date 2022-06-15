@@ -1,7 +1,7 @@
 CXX= g++ -std=c++17
 CXXFLAGS= -g -O2 -Wall -Wextra
 LDFLAGS=
-LIBS= -pthread
+LIBS= -pthread -lprofiler
 
 CORE_O= main.o
 
