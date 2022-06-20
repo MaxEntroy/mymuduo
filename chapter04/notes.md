@@ -22,17 +22,17 @@
 本小节给出Posix threads API的一些使用建议：
 
 - 常用的Pthreads函数
-- 2个：线程创建和等待结束
-- 4个：mutex的创建，销毁，加锁，解锁
-- 5个：condition创建，销毁，等待，通知，广播
+  - 2个：线程创建和等待结束
+  - 4个：mutex的创建，销毁，加锁，解锁
+  - 5个：condition创建，销毁，等待，通知，广播
 - 更常使用的是更高层的封装，比如TheadPool, CountdDownLatch
 - 酌情使用的Pthreads函数
-- pthread_once: 负责多线程的初始化
-- pthread_key*: 可以直接使用__thread，本质是提供ThreadLocal storage
+  - pthread_once: 负责多线程的初始化
+  - pthread_key*: 可以直接使用__thread，本质是提供ThreadLocal storage
 - 不推荐使用的Pthreads函数
-- pthread_rwlock: chenshuo认为这个锁有可能降低性能，待进一步确定。
-- sem*: 和条件变量重合
-- pthread_cancel(pthread_kill): 意味着设计出了问题。
+  - pthread_rwlock: chenshuo认为这个锁有可能降低性能，待进一步确定。
+  - sem*: 和条件变量重合
+  - pthread_cancel(pthread_kill): 意味着设计出了问题。
 
 对于多线程系统编程，难点不在于学习线程原语，而在于学习如何设计并实现**线程安全**且**高效**的程序。
 
@@ -50,11 +50,11 @@ wikipedia给出如下定义
 
 >In computing, a memory model describes the interactions of threads through memory and their shared use of the data.
 
-wiki的解释非常具体(对比cppreference)，简单来说就是约定好线程对于共享数据交互时的行为。那么具体是怎么约定的呢？wiki又进一步给出memory model和编译器优化行为的关系
+wiki的解释非常具体(对比cppreference)，简单来说就是约定好线程通过内存进行共享数据交互时的行为。那么具体是怎么约定的呢？wiki又进一步给出memory model和编译器优化行为的关系
 
 >A memory model allows a compiler to perform many important optimizations.Compiler optimizations like loop fusion move statements in the program, which can influence the order of read and write operations of potentially shared variables. Changes in the ordering of reads and writes can cause race conditions. 
 
-上面这一段解释说的很明白，memory model允许编译器优化代码的读写指令顺序，而后者的改变可能会导致race condition。注意这里的强调的是可能，因为不是所有读写指令都会影响共享变量，也不是所有影响共享变量的读写指令都会导致race condition。所以memory model本身允许编译器进行代码并没有问题，只是它也需要提供对应的同步工具。
+上面这一段解释说的很明白，memory model允许编译器优化代码的读写指令顺序，而后者的改变可能会导致race condition。注意这里的强调的是可能，因为不是所有读写指令都会影响共享变量，也不是所有影响共享变量的读写指令都会导致race condition。所以memory model本身允许编译器进行代码重排并没有问题，只是它也需要提供对应的同步工具。
 
 我们接着看wiki给出的说明:
 
@@ -79,9 +79,9 @@ wikipedia给出如下定义
 - In modern microprocessors, memory ordering characterizes the CPU's ability to reorder memory operations – it is a type of out-of-order execution. Memory reordering can be used to fully utilize the bus-bandwidth of different types of memory such as caches and memory banks.
 - On most modern uniprocessors memory operations are not executed in the order specified by the program code. In single threaded programs all operations appear to have been executed in the order specified, with all out-of-order execution hidden to the programmer – however in multi-threaded environments (or when interfacing with other hardware via memory buses) this can lead to problems. To avoid problems, memory barriers can be used in these cases.
 
-wiki的解释分了3个层次，层层递进。首先，给出memory ordering的朴素定义，即访存指令的顺序。其次，指出在当下的微处理时代，memory ordering从侧面反映了cpu对于访存指令重排序的能力，即指令重排。这个能力使得cpu可能最大程度的利用总线来提升数据交换的效率。最后，指出了在多线程环境下，指令重排可能会导致为题，但是内存屏障可以解决这个问题。
+wiki的解释分了3个层次，层层递进。首先，给出memory ordering的朴素定义，即访存指令的顺序。其次，指出在当下的微处理器时代，memory ordering从侧面反映了cpu对于访存指令重排序的能力，即指令重排。这个能力使得cpu可能最大程度的利用总线来提升数据交换的效率。最后，指出了在多线程环境下，指令重排可能会导致问题，但是内存屏障可以解决这个问题。
 
-memory ordering和momory model的关系在于，后者赋予了编译器前者的能力。如果memory model不允许编译器进行优化，那么指令重排也无法发挥作用。
+memory ordering和memory model的关系在于，后者赋予了编译器前者的能力。如果memory model不允许编译器进行优化，那么指令重排也无法发挥作用。
 
 #### Memory barrier
 
@@ -124,9 +124,9 @@ Singleton* Singleton::instance() {
 ```
 
 众所周知，上面的实现有问题。问题出在2nd test，```pInstance = new Singleton```这条语句可以分解为以下3步
-Step 1: Allocate memory to hold a Singleton object.
-Step 2: Construct a Singleton object in the allocated memory.
-Step 3: Make pInstance point to the allocated memory.
+- Step 1: Allocate memory to hold a Singleton object.
+- Step 2: Construct a Singleton object in the allocated memory.
+- Step 3: Make pInstance point to the allocated memory.
 
 Of critical importance is the observation that compilers are not constrained to perform these steps in this order! In particular, compilers are sometimes allowed to swap steps 2 and 3.
 
@@ -392,8 +392,63 @@ So the run-time penalty is that, every reference of the thread_local variable wi
 - The type has a non-trivial destructor (which is not allowed for __thread variables), or
 - The type variable is initialized by a non-constant-expression (which is also not allowed for __thread variables).
 
-In all other use cases, it behaves the same as __thread. That means, unless you have some extern __thread variables, you could replace all __thread by thread_local without any loss of performance.
+In all other use cases, it behaves the same as __thread. That means, unless you have some extern __thread variables, you could replace all __thread by 
+thread_local without any loss of performance.
+
+### 多线程与IO
+
+本小节作为实践章节，只讨论一个问题，我们用多线程处理同一个socket可以提升效率嘛？chenshuo给出的建议如下：
+
+- 首先，操作文件描述符的系统调用本身是线程安全的，我们不用担心多个线程同时操作文件描述符会造成进程崩溃或内核崩溃。
+- 但是，多个线程同时操作同一个socket 文件描述符确实很麻烦，我认为是得不偿失的
+
+这里的主要问题在于，api接口的线程安全性不等于程序的线程安全，因为前者有可能影响全局状态，所以线程安全接口的组合不代表程序是线程安全的。对于这个问题，常见的有
+- 如果一个thread正在read socket，另一个thread close thread.
+- 两个thread同时close thread
+
+诸如类似的问题，并且socket 配合tcp使用时，不保证数据的完整性。如何保证以下问题：
+- 两个thread同时read一个socket，如何知道哪部分数据对应哪一个线程。
+- write时有同样的问题。
+
+对于以上问题，我们可以通过加锁来进行并发控制。但是chenshuo认为这样不如自始至终都使用一个线程进行处理。为了简单起见，我认为多线程程序应该遵循的原则是: **每个文件描述符只由一个线程操作，从而轻松解决消息收发的顺序性问题，也避免了关闭文件描述符的各种race condition。一个线程可以操作多个文件描述符，但一个线程不能操作别的线程拥有的文件描述符**
+
+### 用RAII 包装文件描述符
+
+这一节核心讨论的是如何避免socket串话的问题。先简述下这个问题：
+- POSIX 标准要求每次新打开文件（含socket）的时候必须使用当前最小可用的文件描述符号码
+- 一个线程正准备read(2) 某个socket，而第二个线程几乎同时close这个socket，第三个线程又恰好open了一个socket
+- 此时，第一个线程会读到错误的数据。第三个线程的功能也会被破坏。
+
+一个好的办法是，开一个全局socket表，只递增。这样socket的前世今生就不会重合，不过chenshuo的建议很简单：使用RAII。由于封装了一个socket的open/close，所以自然有办法判断这个socket是否valid.
+在多线程环境下，一个RAII对象的生命周期管理交给shared_ptr就行。
+
+### RAII与fork
+
+通常我们会用RAII 手法来管理以上种类的资源（加锁解锁、创建销毁定时器等等），但是在fork() 出来的子进程中不一定正常工作，因为资源在fork() 时已经被释放了
+
+说下我的理解，加入fork时，发生了shallow copy，但是会正常析构，那么导致double dtor(两个RAII wrappter管理的只是一份资源)。个人建议，RAII与fork不要配合使用。
+
+### 多线程与fork
+
+fork与多线程面临一样的问题，先直接说结论，不建议配合使用。chenshuo首先强调了历史包袱，即长期以来的程序都是单线程的，但是多线程在90年代引入以后，带来了很多问题。fork一般不能在多线程程序中调用，因为它只会clone main thread of control，not others. 这回导致，如果clone之后，其余线程持有了某个锁，但是它突然死亡，再也没有机会去释放锁。但是如果子进程尝试对这把锁加锁，则会马上死锁。
+
+所以，唯一安全的做法是，fork之后，立即exec另一个程序，即彻底打断主进程和子进程的关系。
+
+### 多线程与signal
+
+这一小节不详细展开讨论(我觉得内容和我当前所处的开发环境关联不大，我日常没有写signal的需求)，只记住结论：在多线程程序中，使用signal 的第一原则是不要使用signal 39
+
+### 小节
+
+下面给出chenshuo关于多线程程序编程的技术经验(不是设计经验)
+- 线程是宝贵的，一个程序可以使用几个或十几个线程。一台机器上不应该同时运行几百个、几千个用户线程，这会大大增加内核scheduler 的负担，降低整体性能(除非支持coroutine这中廉价线程)
+- 线程的创建和销毁是有代价的，一个程序最好在一开始创建所需的线程，并一直反复使用。不要在运行期间反复创建、销毁线程，如果必须这么做，其频度最好能降到1 分钟1 次（或更低)。当然，在现代rpc开发环境下，基本上都是会反复创建coroutine
+- 每个线程应该有明确的职责，例如IO 线程/CPU 线程。参见reactor+thread pool的方式，目前基本都是这样。区分io和cpu线程，不然无法控制对应的数量。
+- 线程之间的交互应该尽量简单，理想情况下，线程之间只用消息传递（例如BlockingQueue）方式交互。如果必须用锁，那么最好避免一个线程同时持有两把或更多的锁，这样可彻底防止死锁。
+- 要预先考虑清楚一个mutable shared 对象将会暴露给哪些线程，每个线程是读
+还是写，读写有无可能并发进行
 
 ### Ref
+
 [https://gcc.gnu.org/onlinedocs/gcc-4.7.2/gcc/Thread_002dLocal.html](https://gcc.gnu.org/onlinedocs/gcc-4.7.2/gcc/Thread_002dLocal.html)
 [What is the performance penalty of C++11 thread_local variables in GCC 4.8?](https://stackoverflow.com/questions/13106049/what-is-the-performance-penalty-of-c11-thread-local-variables-in-gcc-4-8)
