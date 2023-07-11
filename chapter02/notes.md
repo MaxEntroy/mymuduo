@@ -164,6 +164,12 @@ int main()
 - 3.不一定要在mutex 已上锁的情况下调用signal （理论上/apue并没有这么做）。
 - 4.注意区分signal 与broadcast： “broadcast 通常用于表明状态变化，signal 通常用于表示资源可用。（broadcast should generally be used to indicate state change rather than resource availability)”
 
+这里我补充下最佳实践
+- 条件变量的语义更近似同步。
+- 暂时归纳在producer-consumer模型的工具当中。(countdown_latch对应forks-and-join, mutex对应mutual exclusion，cond对应producer-consumer)
+- 一个cond关联一个条件判断(bool表达式)，bool表达式的判断变量有几个，就有几个cond
+- wait端的条件判断放在while-loop中，signal端的条件判断放在if judgement中即可
+
 ```cpp
 // bounded_buffer.h
 #pragma once
@@ -239,10 +245,11 @@ int BoundedBuffer::consume() {
 ```
 
 关于```pthread_cond_wait```还有一些细节需要讨论
-Q: 为什么需要和锁配合使用？
+
+Q: 为什么需要和锁配合使用？<br>
 A: 避免丢失唤醒。即先wait，后signal。还会丢失。这个答案是确定的。参考文献的第一篇篇文章讲的很清楚
 
-Q: 释放锁和进入等待队列为什么原子操作？
+Q: 释放锁和进入等待队列为什么原子操作？<br>
 A：如果确实是先释放锁，再进入等待队列。那原因是一样的，如果没有原子操作，会导致唤醒丢失。但是如果先加入等待队列，再释放锁。不用，因为此时有锁保护，signal线程拿不到锁，无法实际唤醒。
 
 ### CountDownLatch
