@@ -170,6 +170,11 @@ int main()
 - 一个cond关联一个条件判断(bool表达式)，bool表达式的判断变量有几个，就有几个cond
 - wait端的条件判断放在while-loop中，signal端的条件判断放在if judgement中即可
 
+- cond vs count_down_latch
+  - 如果是非计数的条件同步，使用cond
+  - 如果是计数相关的条件同步，使用count_down_latch
+    - count_down_latch封装了cond，并且使用了基于计数判断的条件表达式。所以，它只能用于和计数相关的条件同步
+
 ```cpp
 // bounded_buffer.h
 #pragma once
