@@ -5,6 +5,60 @@
 何避免对象析构时可能存在的race condition（竞态条件）是C++ 多线程编程面临的
 基本问题，可以借助shared_ptr和weak_ptr完美解决。
 
+### Data Race vs Race condition
+
+非常相似的一组概念，但实则没有什么关系。因为定义完全不同。
+
+A data race occurs when:
+- two or more threads in a single process access the same memory location concurrently, and
+- at least one of the accesses is for writing, and
+- the threads are not using any exclusive locks to control their accesses to that memory.
+
+A race condition or race hazard is 
+- the condition of an electronics, software, or other system where 
+- the system's substantive behavior is dependent on the sequence or timing of other uncontrollable events, 
+- leading to unexpected or inconsistent results
+
+No, they are not the same thing. 
+- They are not a subset of one another. 
+- They are also neither the necessary, nor the sufficient condition for one another.
+- Many race conditions can be caused by data races, but this is not necessary.
+
+这两个概念容易搞混是因为，data race的问题一般可以通过加锁解决(当然，atomic也是可以的)。race condition的问题也可以通过解锁解决。
+
+data race有一个最明显的特征是：一定有多线程访问同一个变量，即同一块内存地址。而race conditon则不必须。所以，一个程序可能没有data race，但是它可能有race condtion.
+
+```cpp
+// No data race, but race condition exists.
+// There is no any synchronization mechanism to protect critical region.
+bool unsafe_transfer(std::atomic<int>& src, std::atomic<int>& dst, int money) {
+  if (money < src) {
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    src -= money;
+    dst += money;
+    return true;
+  } else {
+    return false;
+  }
+}
+
+bool safe_transfer(std::atomic<int>& src, std::atomic<int>& dst, std::mutex& mtx, int money) {
+  std::scoped_lock lock(mtx);
+  if (money < src) {
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    src -= money;
+    dst += money;
+    return true;
+  } else {
+    return false;
+  }
+}
+```
+
+非常经典的代码，前者没有data race，但是因为整个实现都是critial region，并且没有任何同步机制。所以，结果不确定。当然，我使用了```sleep```来让现象容易复现。即，程序是否异常取决于是否有一个线程可以先执行完，这是随机事件，导致结果不确定。
+
+从这也可以看出来```atomic```的缺陷，可以保护单个变量，但是无法保护一段critical region.
+
 ### 对象的创建很简单
 
 一个线程安全的class 应当满足以下三个条件
