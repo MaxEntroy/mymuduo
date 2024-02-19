@@ -24,10 +24,11 @@ No, they are not the same thing.
 - They are also neither the necessary, nor the sufficient condition for one another.
 - Many race conditions can be caused by data races, but this is not necessary.
 
-这两个概念容易搞混是因为，data race的问题一般可以通过加锁解决(当然，atomic也是可以的)。race condition的问题也可以通过解锁解决。
+这两个概念容易搞混是因为，data race的问题一般可以通过加锁解决(当然，atomic也是可以的)。race condition的问题也可以通过加锁解决。
 
 data race有一个最明显的特征是：一定有多线程访问同一个变量，即同一块内存地址。而race conditon则不必须。所以，一个程序可能没有data race，但是它可能有race condtion.
 
+看下面的代码：
 ```cpp
 // No data race, but race condition exists.
 // There is no any synchronization mechanism to protect critical region.
