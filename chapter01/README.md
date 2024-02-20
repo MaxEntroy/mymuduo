@@ -296,7 +296,7 @@ void Write() {
 
 果冻虾仁在[c++ 11 的shared_ptr多线程安全？](https://www.zhihu.com/question/56836057)中又做了进一步论述
 - 情况1：多线程操作的就是同一个shared_ptr，写操作(改变指向)不是线程安全的。
-- 情况2：多线程操作的是不同的shared_ptr，但都指向了一个object。这个没问题。这其实也是上面的local copy写法。利用了value-like pointer语义。
+- 情况2：多线程操作的是不同的shared_ptr，但都指向了一个object。这个没问题。这其实也是上面的local copy写法。使用了value-like semantics。
   - 注意，此时也只是改变指向是线程安全的。即smart pointer的赋值。
   - 如果要修改指向的对象，也是有问题的。除非指向的对象本身是线程安全的。
 
