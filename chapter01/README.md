@@ -108,10 +108,10 @@ Observable* s = getSubject();
 pFoo->observe(s); // 二段式构造，或者直接写s->register_(pFoo);
 ```
 
-二段式构造——即构造函数+initialize()——有时会是好办法
-- 这虽然不符合C++ 教条，但是多线程下别无选择
+**二段式构造**——即构造函数+initialize()——有时会是好办法
+- 这虽然不符合C++ 教条，但是多线程下别无选择。不暴露this指针，thread safe.
 - 构造函数不必主动抛异常，调用方靠initialize() 的返回值来判断对象是否构造成
-功，这能简化错误处理
+功，这能简化错误处理。即避免了ctor throw.
 
 即使构造函数的最后一行也不要泄露this，因为Foo 有可能是个基类，基类先于
 派生类构造，执行完Foo::Foo() 的最后一行代码还会继续执行派生类的构造函数，
@@ -158,10 +158,16 @@ x->update();
 3. thread A接着执行，析构，指针置NULL
 4. thread B接着执行，无效地址访问，coredump
 
+二刷，这里我也算经验丰富了，我觉得主要问题在于
+- 析构的时机不确定，这个是最大的问题。即，什么时候析构都不知道，让谁来析构？
+- 不知道是因为在多线程并发环境下，线程A肯定不知道线程B的状态，如果共享了变量，另一个线程是否还在用，还要用多久，这些知识一无所知。
+
 ### 原始指针有何不妥
 
 指向对象的原始指针（raw pointer）是坏的，尤其当暴露给别的线程时。因为**一个动态创建的对象是否还活着，光看指针是看不出来的**
 通过raw pointer实现的observer不是线程安全的，根本原因就在于此
+
+二刷：我觉得是缺乏原子操作的判断，即使当下看存在的，指针不为空。接着访问是可能就是非法访问，因为这个间隙，对象被释放了。
 
 #### 空悬指针
 
@@ -190,7 +196,7 @@ x->update();
 - shared_ptr 控制对象的生命期，强引用
 - weak_ptr 不增加对象的引用次数，不控制对象的生命期，但是它知道对象是否还活着，弱引用
   - 如果对象还活着，那么它可以提升（promote）为有效的shared_ptr；如果对象已经死了，提升会失败，返回一个空的shared_ptr
-  - 提升/lock()行为是线程安全的
+  - 提升/lock()行为是线程安全的。这个主要是为了避免，上一秒有效，下一秒无效，提升失败。只能是判断有效+提升，整个操作是原子的。
 - shared_ptr/weak_ptr 的“计数”在主流平台上是原子操作，没有用锁，性能不俗
 - shared_ptr/weak_ptr 的线程安全级别与std::string 和STL 容器一样，即不是线程安全的
 
@@ -214,11 +220,45 @@ C++ 里可能出现的内存问题大致有这么几个方面：
 4. 内存泄漏：用scoped_ptr，对象析构的时候自动释放内存
 5. 不配对的new[]/delete：把new[] 统统替换为std::vector/scoped_array
 
+需要注意一点：scoped_ptr/shared_ptr/weak_ptr 都是值语意，要么是栈上对象，或是其他对象的直接数据成员，或是标准库容器里的元素。几乎不会有下面这种
+用法:
+```cpp
+shared_ptr<Foo>＊ pFoo = new shared_ptr<Foo>(new Foo);
+// WRONG semantic
+// value-like semantics, not pointer-like semantics.
+```
+
 ### 再论shared_ptr的线程安全
+
+这一小节比较重要，也是容易搞混的地方，即对于shared_ptr来说，到底哪些操作是thread safe，哪些不是。很重要。因为这容易引起误用，从而导致错误。
 
 虽然我们借shared_ptr 来实现线程安全的对象释放，但是shared_ptr 本身不是100% 线程安全的
 - 它的引用计数本身是安全且无锁的，
 - 但对象的读写则不是，因为shared_ptr 有两个数据成员，读写操作不能原子化
+
+#### shared_ptr的引用计数操作是线程安全的
+
+即，多线程下所有和引用计数的操作是线程安全的。
+- 比如，一个全局shared_ptr，此时ref count == 1
+- 还有10个线程分分别进行了copy,那么在他们拷贝结束后，这个ref count == 11，肯定不会是别的值。
+- 同时，local copy结束后，析构shared_ptr会减少引用计数，这个值也是正确的。
+
+#### shared_ptr的读写操作不是线程安全的
+
+先看一下shared_ptr的数据结构：
+
+<img width="500"  src="img/shared_ptr_data_structure.png"/>
+
+我们可以考虑如下操作:
+- t0时刻：p2,p3分配对象。p1为空shared_ptr. 同时执行 p1 = p2; p2 = p3;
+- t1时刻：p1的object ptr指向p2的object.
+- t2时刻：p2的object ptr指向p3的object，同时p2 control block ptr指向p3的control block。此时因为p2的老control block中的引用计数变为0，对老object进行析构。
+- t3时刻，p1完成control block ptr的赋值。但此时，原来p2的control block/object均已析构，此时造成p1为dangling pointer。
+
+根本原因在于，shared_ptr的写操作不是线程安全的，其牵扯较多操作。
+- 原始指针的变化。object/control block指针的变化
+- 可能的析构操作。由于更新引用计数，可能会造成老对象的析构操作。
+- 这多个操作均非事务执行，一旦多线程交替执行，会造成race condition.
 
 1. 一个shared_ptr 对象实体可被多个线程同时读取
 2. 两个shared_ptr 对象实体可以被两个线程同时写入，“析构”算写操作
@@ -254,7 +294,35 @@ void Write() {
 
 上面代码使用了local copy的方式，缩短了临界区，对local_ptr的读写本身不需要加锁。
 
+果冻虾仁在[c++ 11 的shared_ptr多线程安全？](https://www.zhihu.com/question/56836057)中又做了进一步论述
+- 情况1：多线程操作的就是同一个shared_ptr，写操作(改变指向)不是线程安全的。
+- 情况2：多线程操作的是不同的shared_ptr，但都指向了一个object。这个没问题。这其实也是上面的local copy写法。利用了value-like pointer语义。
+  - 注意，此时也只是改变指向是线程安全的。即smart pointer的赋值。
+  - 如果要修改指向的对象，也是有问题的。除非指向的对象本身是线程安全的。
+
+shared_ptr的线程安全性确实有点复杂，需要分情况，仔细讨论。
+
 ### shared_ptr技术与陷阱
+
+#### make_shared vs direct use of new
+
+[std::make_shared](https://en.cppreference.com/w/cpp/memory/shared_ptr/make_shared)中指出：
+- std::shared_ptr<T>(new T(args...)) performs at least two allocations (one for the object T and one for the control block of the shared pointer), 
+- while std::make_shared<T> typically performs only one allocation (the standard recommends, but does not require this; all known implementations do this).
+
+同时，EMC中也指出：
+- The size and speed advantages of std::make_shared vis-à-vis direct use of new stem
+from std::shared_ptr’s control block being placed in the same chunk of memory
+as the managed object. 
+- When that object’s reference count goes to zero, the object is destroyed (i.e., its destructor is called). However, the memory it occupies can’t be released until the control block has also been destroyed, because the same chunk of dynamically allocated memory contains both
+
+结合```shared_ptr```的数据结构，我们知道
+- ```make_shared```将control block和object分配在一块内存上，且分配一次。
+- ```direct use of new```则分配两次，不在同一个内存上。
+- 上面的分配方式，或者说内存的组织结构，造成了他们之间性能的差异。
+- ```make_shared```只分配一次，有时间上的性能收益。但是，control block和object分配在一起，也造成其空间上的损耗。
+  - 如果weak_ptr的引用计数(weak count)不为0(ref count为0，weak count不增加ref count。即使promote失败可以接受，所以它的值和ref count并不同步)，此时object不能释放。因为control block不能释放(因为weak count不为0)，这也就导致了garbage存在。
+  - 但如果使用direct use of new，ref count为0， weak count不为0。可以释放object，但是保存control block。因为物理上他们不在一起。
 
 #### 意外延长对象的生命期
 
