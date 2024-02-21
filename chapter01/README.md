@@ -200,7 +200,7 @@ x->update();
 - shared_ptr/weak_ptr 的“计数”在主流平台上是原子操作，没有用锁，性能不俗
 - shared_ptr/weak_ptr 的线程安全级别与std::string 和STL 容器一样，即不是线程安全的
 
-这里有一点要注意，weak_ptr支持弱引用，即不要求指向的对象有效，这个是合理的。raw pointer的问题在于，当指向对象无效时，不能判断是否有效，从而进一步访问导致程序coredump
+这里有一点要注意，weak_ptr支持弱引用，即不要求指向的对象有效，这个是合理的。raw pointer的问题在于，当指向对象无效时，不能判断是否有效，从而进一步访问导致程序coredump。
 weak_ptr提供了判断指向对象是否有效的方法，避免了raw pointer(一个动态创建的对象是否还活着，光看指针是看不出来的)
 的缺点。并且，promote/lock行为又是线程安全的，这样当指向对象无效时，不去进一步访问，即可保证程序的运行正常。
 
@@ -227,6 +227,64 @@ shared_ptr<Foo>＊ pFoo = new shared_ptr<Foo>(new Foo);
 // WRONG semantic
 // value-like semantics, not pointer-like semantics.
 ```
+
+### 常见内存问题再总结
+
+为什么内存问题会导致crash，这还得从OS说起。看下面的图：
+
+<img width="500"  src="img/mmu.png"/>
+
+- With virtual addressing, the CPU accesses main memory by generating a vir-
+tual address (VA), which is converted to the appropriate physical address before
+being sent to main memory.
+- The task of converting a virtual address to a physical
+one is known as address translation.
+- Dedicated hardware on the CPU chip called the memory management unit
+(MMU) translates virtual addresses on the fly
+
+用户进程工作在自己的virtual address space当中，产生VA，由MMU转换成PA. MMU当中有一个很重要的作用就是：VM as a tool for memory protection.
+
+>Any modern computer system must provide the means for the operating system to control access to the memory system
+
+- A user process should not be allowed to modify its read-only code section.
+- Nor should it be allowed to read or modify any of the code and data structures in the kernel.
+- It should not be allowed to read or write the private memory of other processes,
+- and it should not be allowed to modify any virtual pages that are shared with other processes.
+
+>If an instruction violates these permissions, then the CPU triggers a general
+protection fault that transfers control to an exception handler in the kernel, which
+sends a SIGSEGV signal to the offending process. Linux shells typically report this
+exception as a "segmentation fault."
+
+>If some process inadvertently writes to the memory
+used by another process, that process might fail in some bewildering fashion totally
+unrelated to the program logic.
+
+所以，如果当前进程进行了非法地址访问，offending process will crash. 这并不是因为程序本来的业务逻辑导致，而是因为非法地址访问，触发了MMU进行
+memory protection，后者以最小的代价，Crashing offending process. 当然，这一切都是在全知全能的os(kernel)中进行的，这其中涉及了process management,
+memory management.
+
+执行逻辑大概如下：
+- MMU进行内存保护时，检测到非法地址访问。发消息给CPU
+- CPU收到消息后，触发保护机制，将控制权交给kernel
+- kernel给offending process发信号，kill后者，并留下segmentation fault coredump.
+
+鉴于此，对于内存类问题，陈硕的分类更细致，我觉得可以粗略分为分两类。
+- 非法地址访问。这个最常见，很多内存问题本质上都是这个问题。访问了不是当前进程地址空间(address space)的地址，也叫做内存踩踏。常见的有：
+  - deference illegal addr. 
+    - 比如，进程中分配了一块内存，多个指针指向该地址。然后该内存被释放。
+    - 但是，raw pointer不知道，继续访问。此时该内存可能已经分配给其他内存，造成非法地址访问。
+  - deference nullptr.
+    - nullptr也可以理解为不是当前进程空间的地址
+  - subscript overflow.
+    - 越界的数组地址，并不在当前进程空间内部。
+  - double free.
+    - 已经别释放的地址，不在当前进程的地址空间中。
+    - 重复释放，相当于访问了非法地址。
+  - buffer overrun.
+    - 常见的有栈溢出。以fiber为例，128K stack size
+    - 溢出后，访问了不在当前fiber地址空间的地址，非法地址。
+- 内存泄漏。
 
 ### 再论shared_ptr的线程安全
 
