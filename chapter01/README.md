@@ -260,7 +260,7 @@ exception as a "segmentation fault."
 used by another process, that process might fail in some bewildering fashion totally
 unrelated to the program logic.
 
-所以，如果当前进程进行了非法地址访问，offending process will crash. 这并不是因为程序本来的业务逻辑导致，而是因为非法地址访问，触发了MMU进行
+所以，如果当前进程进行了非法地址访问，offending process will be crashed. 这并不是因为程序本来的业务逻辑导致，而是因为非法地址访问，触发了MMU进行
 memory protection，后者以最小的代价，Crashing offending process. 当然，这一切都是在全知全能的os(kernel)中进行的，这其中涉及了process management,
 memory management.
 
@@ -269,7 +269,7 @@ memory management.
 - CPU收到消息后，触发保护机制，将控制权交给kernel
 - kernel给offending process发信号，kill后者，并留下segmentation fault coredump.
 
-鉴于此，对于内存类问题，陈硕的分类更细致，我觉得可以粗略分为分两类。
+鉴于此，对于内存类问题，陈硕的分类更细致，我觉得可以粗略分为分两大类。
 - 非法地址访问。这个最常见，很多内存问题本质上都是这个问题。访问了不是当前进程地址空间(address space)的地址，也叫做内存踩踏。常见的有：
   - deference illegal addr. 
     - 比如，进程中分配了一块内存，多个指针指向该地址。然后该内存被释放。
