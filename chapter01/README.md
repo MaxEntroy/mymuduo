@@ -271,9 +271,10 @@ memory management.
 
 鉴于此，对于内存类问题，陈硕的分类更细致，我觉得可以粗略分为分两大类。
 - 非法地址访问。这个最常见，很多内存问题本质上都是这个问题。访问了不是当前进程地址空间(address space)的地址，也叫做内存踩踏。常见的有：
-  - deference illegal addr. 
+  - deference illegal pointer 
     - 比如，进程中分配了一块内存，多个指针指向该地址。然后该内存被释放。
     - 但是，raw pointer不知道，继续访问。此时该内存可能已经分配给其他内存，造成非法地址访问。
+    - chenshuo总结为空悬指针/野指针
   - deference nullptr.
     - nullptr也可以理解为不是当前进程空间的地址
   - subscript overflow.
