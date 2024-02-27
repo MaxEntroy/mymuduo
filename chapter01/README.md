@@ -313,7 +313,7 @@ memory management.
 - t2时刻：p2的object ptr指向p3的object，同时p2 control block ptr指向p3的control block。此时因为p2的老control block中的引用计数变为0，对老object进行析构。
 - t3时刻，p1完成control block ptr的赋值。但此时，原来p2的control block/object均已析构，此时造成p1为dangling pointer。
 
-<img width="500"  src="img/shared_ptr_thread_safe.png"/>
+<img width="600"  src="img/shared_ptr_thread_safe.png"/>
 
 根本原因在于，shared_ptr的写操作不是线程安全的(not atomic)，其包含不止一个步骤。
 - 原始指针的变化。object/control block指针的变化
