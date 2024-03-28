@@ -386,24 +386,15 @@ as the managed object.
 
 #### 意外延长对象的生命期
 
-如果不小心遗留了一个拷贝，那么对象就永世长存了。
-一个出错的可能是boost::bind，因为boost::bind 会把实参拷贝一份，如
-果参数是个shared_ptr，那么对象的生命期就不会短于boost::function 对象
+这一小节，chenshuo本意是想说shared_ptr和关联对象是string ref。只要有一个shared_ptr存在，就会导致对象不会析构。如果一旦形成cycle，则会导致资源泄露的情况，类似dead lock的情况。
 
-```
-class Foo
-{
-void doit();
-};
-shared_ptr<Foo> pFoo(new Foo);
-boost::function<void()> func = boost::bind(&Foo::doit, pFoo); // long life foo
-```
+当然，这里我觉得还有另外一个重点是，std::shared ctor和std::make_shared的区别，后者也会导致意外延长对象的生命周期。
 
 #### 函数参数
 
 因为要修改引用计数（而且拷贝的时候通常要加锁），shared_ptr 的
 拷贝开销比拷贝原始指针要高，但是需要拷贝的时候并不多。多数情况下它可以以
-**const reference** 方式传递.遵照这个规则，基本上不会遇到反复拷贝shared_ptr 导致的性能问题
+**const reference** 方式传递.遵照这个规则，基本上不会遇到反复拷贝shared_ptr导致的性能问题
 
 ```cpp
 void save(const shared_ptr<Foo>& pFoo); // pass by const reference
@@ -424,17 +415,24 @@ void onMessage(const string& msg)
 }
 ```
 
+这样做我就得也有一个好处是，避免意外延长的对象生命周期。控制shared_ptr对象的数量。
+
 #### 析构动作在创建时被捕获
 
-这点我认为很重要的一个特性是，析构动作可以定制。
+这点我认为很重要的一个特性是，析构动作可以定制。其实chenshuo是想类比```std::unique_ptr```，dtor是类型的一部分。
+
+但是对于```std::shared_ptr```而言，dtor并不是类型的一部分。
+
+这有一个好处，我在ps里见过最多的就是，lambda来定制这个dtor. chenshuo认为这是泛型和 OO 的一次完美结合。
 
 #### 析构所在的线程
 
-对象的析构是同步的，当最后一个指向x 的shared_ptr 离开其作用域的时候，x 会同时在同一个线程析构。这个线程不一定是对象诞生的线程
-这个特性是把双刃剑：如果对象的析构比较耗时，那么可能会拖慢关键线程的速度。
+- 对象的析构是同步的，当最后一个指向x 的shared_ptr 离开其作用域的时候，x 会同时在同一个线程析构。这个线程不一定是对象诞生的线程
+- 这个特性是把双刃剑：如果对象的析构比较耗时，那么可能会拖慢关键线程的速度。
 
-同时，我们可以用一个单独的线程来专门做析构，通过一个BlockingQueue<shared_ptr<void> > 把对象的析
-构都转移到那个专用线程，从而解放关键线程。
+这个确实，因为shared_ptr关联dynamic memory，后者本来就是用来共享的。所以跨线程没有问题。但有可能让最后的线程来完成析构。这会导致析构的线程不确定，如果是关键路径线程，有delay风险。
+
+同时，我们可以用一个单独的线程来专门做析构，通过一个BlockingQueue<shared_ptr<void> > 把对象的析构都转移到那个专用线程，从而解放关键线程。这样对象的析构也就确定了！非常好的办法。
 
 #### 现成的RAII handle
 
