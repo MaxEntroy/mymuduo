@@ -327,28 +327,25 @@ memory management.
 ```cpp
 struct Foo {};
 
-std::shared_ptr<Foo> foo_ptr;
-MutexLock ptr_mtx;
-
-void ReadOp(const std::shared_ptr<Foo>& ptr) {}
-void WriteOp(std::shared_ptr<Foo>* ptr) {}
+std::shared_ptr<Foo> data;
+MutexLock mtx;
 
 void Read() {
-  std::shared_ptr<Foo> local_ptr;
+  std::shared_ptr<Foo> local_data;
   {
-    MutexLockGuard mtx_guard(ptr_mtx);
-    local_ptr = foo_ptr; // copy semantics is not heavy
+    MutexLockGuard mtx_guard(mtx);
+    local_data = data; // copy semantics is not heavy
   }
-  ReadOp(local_ptr);
+  // Read by local_data
+  // If we do not copy the data, segment may occur because the dadta will be destroyed during read operation.
 }
 
 void Write() {
-  std::shared_ptr<Foo> local_ptr;
+  std::shared_ptr<Foo> new_data = std::make_shared<Foo>();
   {
-    MutexLockGuard mtx_guard(ptr_mtx);
-    local_ptr = foo_ptr;
+    MutexLockGuard mtx_guard(mtx);
+    data = new_data;
   }
-  WriteOp(&local_ptr);
 }
 ```
 
@@ -361,6 +358,13 @@ void Write() {
   - 如果要修改指向的对象，也是有问题的。除非指向的对象本身是线程安全的。
 
 shared_ptr的线程安全性确实有点复杂，需要分情况，仔细讨论。
+
+update(2024.11.26): 我在最近的一次分享当中，重新理解了shared_ptr的线程安全性。上面的理解有误：
+- 如果一个shared_ptr即读，由写。那么它就是线程不安全的。
+- 如果一个shared_ptr只读，那么它是线程安全的。
+- 如果一个shared_ptr只写，也不是线程安全的。
+
+根本问题都在于，shared_ptr有两个数据成员，这两个数据成员的操作，没有临界区的保护。
 
 ### shared_ptr技术与陷阱
 
